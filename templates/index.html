@@ -22,8 +22,10 @@
 
   <main class="main">
     <div class="ocr-workspace">
-      <div class="ocr-single">
-        <div class="ocr-left">
+      <div class="ocr-2-colunas">
+        <!-- Coluna 1: Foto -->
+        <div class="ocr-coluna">
+          <div class="coluna-titulo">📷 Foto</div>
           <div class="photo-drop" id="photo-drop" onclick="document.getElementById('photo-input').click()" ondragover="handleDragOver(event)" ondrop="handleDrop(event)" ondragleave="handleDragLeave(event)">
             <img id="preview-img" style="display:none">
             <div class="drop-text" id="drop-text">
@@ -32,17 +34,34 @@
             </div>
           </div>
           <input type="file" id="photo-input" accept="image/*" hidden onchange="handlePhotoSelect(this)">
-          <div class="ocr-buttons"><button class="btn-extrair" id="btn-extrair" onclick="executarOCR()" disabled>⚡ Extrair Texto</button><button class="btn-apagar" id="btn-apagar" onclick="clearPhoto()" disabled>🗑️ Trocar Foto</button></div>
-        </div>
-        <div class="ocr-right">
-          <textarea id="ocr-text" placeholder="O texto extraído aparecerá aqui..."></textarea>
-          <div class="ocr-actions">
-            <button class="btn-limpar" id="btn-limpar" onclick="limparTexto()" disabled>🧹 Limpar</button>
-            <button class="btn-salvar" id="btn-salvar" onclick="salvarTexto()" disabled>💾 Salvar</button>
+          <div class="ocr-buttons">
+            <button class="btn-extrair" id="btn-extrair" onclick="executarOCR()" disabled>⚡ Extrair Texto</button>
+            <button class="btn-apagar" id="btn-apagar" onclick="clearPhoto()" disabled>🗑️ Trocar</button>
           </div>
-          <div class="ocr-status" id="ocr-status"></div>
+        </div>
+
+        <!-- Coluna 2: Texto (Tesseract) -->
+        <div class="ocr-coluna">
+          <div class="coluna-titulo tesseract">📝 Texto Extraído <span class="ocr-stats" id="tess-stats"></span></div>
+          <textarea id="ocr-text" placeholder="Cole ou arraste texto aqui para limpar e salvar..."></textarea>
+          <div class="ocr-actions">
+            <button class="btn-limpar" id="btn-limpar" onclick="limparTexto()">🧹 Limpar</button>
+            <button class="btn-traduzir" id="btn-traduzir" onclick="traduzirTexto()">🌐 Traduzir</button>
+            <button class="btn-salvar" id="btn-salvar" onclick="salvarTexto()">💾 Salvar</button>
+          </div>
         </div>
       </div>
+      
+      <!-- Lixeira -->
+      <div class="lixeira-area">
+        <div class="coluna-titulo">🗑️ Lixeira - Texto a ignorar</div>
+        <textarea id="lixeira-text" placeholder="Cole textos ruins aqui (ED+, EEE, = -, BEO, etc)... use Enter para separar"></textarea>
+        <div class="ocr-actions">
+          <button class="btn-lixeira" onclick="adicionarALixeira()">➕ Adicionar à blacklist</button>
+        </div>
+      </div>
+      
+      <div class="ocr-status" id="ocr-status"></div>
     </div>
 
     <div class="bottom-panel">
@@ -60,12 +79,28 @@
           <h3>🔑 Palavras</h3>
           <div id="top-palavras-sidebar"></div>
         </div>
+        <div class="sidebar-section">
+          <h3>@ Principais Users</h3>
+          <div id="top-usuarios-sidebar"></div>
+        </div>
+        <div class="sidebar-section">
+          <h3>🐙 GitHub Repos</h3>
+          <div id="top-repos-sidebar"></div>
+        </div>
+        <div class="sidebar-section">
+          <h3>🔗 Semelhantes</h3>
+          <div class="similares-grid" id="similares-list"></div>
+        </div>
       </aside>
 
       <div class="content">
         <div class="tabs">
           <button class="tab active" onclick="trocarAba('galeria', this)">📷 Galeria</button>
           <button class="tab" onclick="trocarAba('brain', this)">🧠 Brain Map</button>
+          <button class="tab" onclick="trocarAba('timeline', this)">📅 Timeline</button>
+          <button class="tab" onclick="trocarAba('clusters', this)">🧩 Clusters</button>
+          <button class="tab" onclick="trocarAba('grafo', this)">🕸 Grafo</button>
+          <button class="tab" onclick="trocarAba('dossie', this)">🔍 Dossiê</button>
           <div class="filters">
             <button class="filter active" data-status="todos" onclick="filtrarStatus('todos', this)">Todas</button>
             <button class="filter" data-status="pendente" onclick="filtrarStatus('pendente', this)">Pendentes</button>
@@ -79,10 +114,100 @@
           <div class="word-cloud" id="word-cloud"></div>
           <div class="palavras-grid" id="top-palavras"></div>
         </div>
+        <div id="tab-timeline" class="tab-content" style="display:none">
+          <div class="timeline-section">
+            <h3>Por Mês</h3>
+            <div class="timeline-bars" id="timeline-meses"></div>
+          </div>
+          <div class="timeline-section">
+            <h3>Por Semana</h3>
+            <div class="timeline-bars" id="timeline-semanas"></div>
+          </div>
+        </div>
+        <div id="tab-clusters" class="tab-content" style="display:none">
+          <div class="clusters-header">
+            <div class="clusters-title">Clusters da Semana</div>
+            <button class="btn-embeddings" onclick="rebuildEmbeddings()">Atualizar Vetores</button>
+          </div>
+          <div class="clusters-grid" id="clusters-grid"></div>
+        </div>
+        <div id="tab-grafo" class="tab-content" style="display:none">
+          <div class="grafo-header">
+            <div class="clusters-title">Grafo Semântico</div>
+            <button class="btn-embeddings" onclick="carregarGrafo()">Atualizar Grafo</button>
+          </div>
+          <div class="grafo-wrap" id="grafo-area"></div>
+        </div>
+        <div id="tab-dossie" class="tab-content" style="display:none">
+          <div class="dossie-layout">
+            <div class="dossie-panel">
+              <div class="dossie-header">
+                <div class="clusters-title">Dossiê de Termo</div>
+              </div>
+              <div class="dossie-form">
+                <input id="dossie-termo" type="text" placeholder="Digite um termo, @user ou repo">
+                <button class="btn-embeddings" onclick="gerarDossie()">Gerar Dossiê</button>
+              </div>
+              <div class="dossie-status" id="dossie-status"></div>
+              <div class="dossie-grid">
+                <div class="dossie-card">
+                  <div class="dossie-card-title">Resumo</div>
+                  <div class="dossie-card-body" id="dossie-resumo"></div>
+                </div>
+                <div class="dossie-card">
+                  <div class="dossie-card-title">Coocorrências</div>
+                  <div class="dossie-card-body" id="dossie-cooc"></div>
+                </div>
+                <div class="dossie-card">
+                  <div class="dossie-card-title">Usuários e Repos</div>
+                  <div class="dossie-card-body" id="dossie-usuarios-repos"></div>
+                </div>
+                <div class="dossie-card">
+                  <div class="dossie-card-title">Timeline</div>
+                  <div class="dossie-card-body" id="dossie-timeline"></div>
+                </div>
+                <div class="dossie-card dossie-card-full">
+                  <div class="dossie-card-title">Fotos âncora</div>
+                  <div class="dossie-card-body" id="dossie-anchors"></div>
+                </div>
+                <div class="dossie-card dossie-card-full">
+                  <div class="dossie-card-title">Fotos relacionadas</div>
+                  <div class="dossie-card-body" id="dossie-fotos"></div>
+                </div>
+              </div>
+            </div>
+            <div class="llm-panel">
+              <div class="dossie-header">
+                <div class="clusters-title">Insights com LLM</div>
+              </div>
+              <div class="llm-form">
+                <label>Provider</label>
+                <select id="llm-provider">
+                  <option value="ollama">Ollama</option>
+                  <option value="groq">Groq</option>
+                  <option value="mistral">Mistral</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="glm">GLM (Zhipu)</option>
+                  <option value="custom">OpenAI-Compatível</option>
+                </select>
+                <label>Modelo</label>
+                <input id="llm-model" type="text" placeholder="Informe o modelo">
+                <label>Base URL (opcional)</label>
+                <input id="llm-base-url" type="text" placeholder="https://...">
+                <label>API Key</label>
+                <input id="llm-api-key" type="password" placeholder="Chave do provider">
+                <button class="btn-embeddings" onclick="gerarInsightsLLM()">Gerar Insights</button>
+              </div>
+              <div class="llm-status" id="llm-status"></div>
+              <div class="llm-output" id="llm-output"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </main>
 
+  <script src="https://d3js.org/d3.v7.min.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

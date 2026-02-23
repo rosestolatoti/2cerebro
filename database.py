@@ -16,6 +16,14 @@ def get_conn():
     return conn
 
 
+def ensure_columns(conn, table: str, columns: list[tuple[str, str]]):
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    existentes = {r["name"] for r in rows}
+    for nome, definicao in columns:
+        if nome not in existentes:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {definicao}")
+
+
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
@@ -30,12 +38,31 @@ def init_db():
             ocr_texto   TEXT,
             ocr_limpo   TEXT,
             criado_em   TEXT,
-            processado_em TEXT
+            processado_em TEXT,
+            hash_md5    TEXT,
+            data_captura TEXT,
+            semana      TEXT,
+            mes         TEXT,
+            motor_ocr   TEXT DEFAULT 'tesseract'
         );
 
         CREATE TABLE IF NOT EXISTS palavras (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             palavra     TEXT UNIQUE NOT NULL,
+            contagem    INTEGER DEFAULT 0,
+            fotos_ids   TEXT DEFAULT '[]'
+        );
+
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            username    TEXT UNIQUE NOT NULL,
+            contagem    INTEGER DEFAULT 0,
+            fotos_ids   TEXT DEFAULT '[]'
+        );
+
+        CREATE TABLE IF NOT EXISTS repos (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo        TEXT UNIQUE NOT NULL,
             contagem    INTEGER DEFAULT 0,
             fotos_ids   TEXT DEFAULT '[]'
         );
@@ -46,21 +73,76 @@ def init_db():
             palavras    TEXT DEFAULT '[]',
             cor         TEXT DEFAULT '#4f46e5'
         );
+        CREATE TABLE IF NOT EXISTS blacklist (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            texto       TEXT UNIQUE NOT NULL,
+            criado_em   TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS embeddings (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero      TEXT UNIQUE NOT NULL,
+            modelo      TEXT NOT NULL,
+            vetor       TEXT NOT NULL,
+            dimensao    INTEGER,
+            atualizado_em TEXT
+        );
     """)
 
+    colunas_fotos = [
+        ("hash_md5", "hash_md5 TEXT"),
+        ("data_captura", "data_captura TEXT"),
+        ("semana", "semana TEXT"),
+        ("mes", "mes TEXT"),
+        ("motor_ocr", "motor_ocr TEXT DEFAULT 'tesseract'")
+    ]
+    ensure_columns(conn, "fotos", colunas_fotos)
+
+    conn.commit()
+
     # Grupos semânticos padrão
+    import json
     grupos_padrao = [
-        ("llm",        ["claude", "gpt", "ollama", "gemini", "kimi", "qwen", "llama", "mistral", "anthropic", "openai"], "#7c3aed"),
-        ("agentes",    ["agent", "agente", "openclaw", "nanoclaw", "clawwork", "mcp", "skill", "workflow"], "#0891b2"),
-        ("github",     ["github", "repo", "repositorio", "git", "commit", "pull", "branch", "open source", "stars"], "#16a34a"),
-        ("sql",        ["sql", "query", "select", "join", "index", "banco", "tabela", "database", "where", "group"], "#d97706"),
-        ("automacao",  ["automacao", "automation", "script", "python", "n8n", "webhook", "api", "cron", "pipeline"], "#dc2626"),
-        ("produtividade", ["obsidian", "markdown", "nota", "memoria", "context", "token", "prompt", "agents.md"], "#059669"),
-        ("tendencia",  ["launch", "novo", "release", "breaking", "ultima hora", "2025", "2026", "viral"], "#db2777"),
+        (
+            "llm",
+            [
+                "claude", "gpt", "ollama", "gemini", "kimi", "qwen", "llama", "mistral", "anthropic", "openai"
+            ],
+            "#7c3aed",
+        ),
+        (
+            "agentes",
+            ["agent", "agente", "openclaw", "nanoclaw", "clawwork", "mcp", "skill", "workflow"],
+            "#0891b2",
+        ),
+        (
+            "github",
+            ["github", "repo", "repositorio", "git", "commit", "pull", "branch", "open source", "stars"],
+            "#16a34a",
+        ),
+        (
+            "sql",
+            ["sql", "query", "select", "join", "index", "banco", "tabela", "database", "where", "group"],
+            "#d97706",
+        ),
+        (
+            "automacao",
+            ["automacao", "automation", "script", "python", "n8n", "webhook", "api", "cron", "pipeline"],
+            "#dc2626",
+        ),
+        (
+            "produtividade",
+            ["obsidian", "markdown", "nota", "memoria", "context", "token", "prompt", "agents.md"],
+            "#059669",
+        ),
+        (
+            "tendencia",
+            ["launch", "novo", "release", "breaking", "ultima hora", "2025", "2026", "viral"],
+            "#db2777",
+        ),
     ]
 
     for nome, palavras, cor in grupos_padrao:
-        import json
         cur.execute("""
             INSERT OR IGNORE INTO grupos (nome, palavras, cor)
             VALUES (?, ?, ?)
@@ -74,12 +156,20 @@ def init_db():
 # --- FOTOS ---
 
 def registrar_foto(numero: str, filename: str, filepath: str, hash_md5: str = None) -> int:
+    agora = datetime.now()
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
-        INSERT OR IGNORE INTO fotos (numero, filename, filepath, hash_md5, criado_em)
-        VALUES (?, ?, ?, ?, ?)
-    """, (numero, filename, filepath, hash_md5, datetime.now().isoformat()))
+        INSERT OR IGNORE INTO fotos
+        (numero, filename, filepath, hash_md5, criado_em, data_captura, semana, mes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        numero, filename, filepath, hash_md5,
+        agora.isoformat(),
+        agora.strftime("%Y-%m-%d"),
+        agora.strftime("%Y-W%W"),
+        agora.strftime("%Y-%m")
+    ))
     conn.commit()
     id_ = cur.lastrowid
     conn.close()
@@ -117,6 +207,34 @@ def deletar_foto_db(numero: str):
                 conn.execute(
                     "UPDATE palavras SET fotos_ids=?, contagem=? WHERE id=?",
                     (json.dumps(fotos), nova_contagem, p["id"])
+                )
+
+    usuarios = conn.execute("SELECT id, fotos_ids, contagem FROM usuarios").fetchall()
+    for u in usuarios:
+        fotos = json.loads(u["fotos_ids"] or "[]")
+        if numero in fotos:
+            fotos.remove(numero)
+            nova_contagem = max(0, u["contagem"] - 1)
+            if nova_contagem == 0:
+                conn.execute("DELETE FROM usuarios WHERE id=?", (u["id"],))
+            else:
+                conn.execute(
+                    "UPDATE usuarios SET fotos_ids=?, contagem=? WHERE id=?",
+                    (json.dumps(fotos), nova_contagem, u["id"])
+                )
+
+    repos = conn.execute("SELECT id, fotos_ids, contagem FROM repos").fetchall()
+    for r in repos:
+        fotos = json.loads(r["fotos_ids"] or "[]")
+        if numero in fotos:
+            fotos.remove(numero)
+            nova_contagem = max(0, r["contagem"] - 1)
+            if nova_contagem == 0:
+                conn.execute("DELETE FROM repos WHERE id=?", (r["id"],))
+            else:
+                conn.execute(
+                    "UPDATE repos SET fotos_ids=?, contagem=? WHERE id=?",
+                    (json.dumps(fotos), nova_contagem, r["id"])
                 )
 
     conn.execute("DELETE FROM fotos WHERE numero=?", (numero,))
@@ -208,6 +326,152 @@ def top_palavras(limit: int = 100):
 def listar_grupos():
     conn = get_conn()
     rows = conn.execute("SELECT * FROM grupos ORDER BY nome").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- USUARIOS (@mentions) ---
+
+def atualizar_usuarios(numero_foto: str, usernames: list):
+    import json
+    conn = get_conn()
+    cur = conn.cursor()
+
+    for username in usernames:
+        username = username.lower().strip()
+        if len(username) < 2:
+            continue
+
+        row = cur.execute(
+            "SELECT id, contagem, fotos_ids FROM usuarios WHERE username=?",
+            (username,)
+        ).fetchone()
+
+        if row:
+            fotos = json.loads(row["fotos_ids"])
+            if numero_foto not in fotos:
+                fotos.append(numero_foto)
+            cur.execute(
+                "UPDATE usuarios SET contagem=?, fotos_ids=? WHERE username=?",
+                (row["contagem"] + 1, json.dumps(fotos), username)
+            )
+        else:
+            cur.execute(
+                "INSERT INTO usuarios (username, contagem, fotos_ids) VALUES (?, 1, ?)",
+                (username, json.dumps([numero_foto]))
+            )
+
+    conn.commit()
+    conn.close()
+
+
+def top_usuarios(limit: int = 20):
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT username, contagem, fotos_ids
+        FROM usuarios
+        ORDER BY contagem DESC
+        LIMIT ?
+    """, (limit,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def atualizar_repos(numero_foto: str, repos: list):
+    import json
+    conn = get_conn()
+    cur = conn.cursor()
+
+    for repo in repos:
+        repo = repo.lower().strip()
+        if len(repo) < 3:
+            continue
+
+        row = cur.execute(
+            "SELECT id, contagem, fotos_ids FROM repos WHERE repo=?",
+            (repo,)
+        ).fetchone()
+
+        if row:
+            fotos = json.loads(row["fotos_ids"])
+            if numero_foto not in fotos:
+                fotos.append(numero_foto)
+            cur.execute(
+                "UPDATE repos SET contagem=?, fotos_ids=? WHERE repo=?",
+                (row["contagem"] + 1, json.dumps(fotos), repo)
+            )
+        else:
+            cur.execute(
+                "INSERT INTO repos (repo, contagem, fotos_ids) VALUES (?, 1, ?)",
+                (repo, json.dumps([numero_foto]))
+            )
+
+    conn.commit()
+    conn.close()
+
+
+def top_repos(limit: int = 20):
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT repo, contagem, fotos_ids
+        FROM repos
+        ORDER BY contagem DESC
+        LIMIT ?
+    """, (limit,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# --- BLACKLIST ---
+
+def adicionar_blacklist(texto: str):
+    conn = get_conn()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO blacklist (texto) VALUES (?)",
+            (texto.strip(),)
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def listar_blacklist():
+    conn = get_conn()
+    rows = conn.execute("SELECT id, texto, criado_em FROM blacklist ORDER BY id DESC").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def remover_blacklist(texto_id: int):
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM blacklist WHERE id=?", (texto_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def salvar_embedding(numero: str, modelo: str, vetor: list[float], dimensao: int):
+    import json
+    conn = get_conn()
+    conn.execute("""
+        INSERT OR REPLACE INTO embeddings (numero, modelo, vetor, dimensao, atualizado_em)
+        VALUES (?, ?, ?, ?, ?)
+    """, (numero, modelo, json.dumps(vetor), dimensao, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+
+def listar_embeddings(modelo: str):
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT numero, modelo, vetor, dimensao, atualizado_em
+        FROM embeddings
+        WHERE modelo=?
+    """, (modelo,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 

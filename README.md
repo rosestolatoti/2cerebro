@@ -1,171 +1,141 @@
-# 2 CEREBRO - Extrator de Texto de Imagens
+# 2 CÉREBRO — OCR, Contexto e Tendências de Prints
 
-**Desenvolvido por Fábio Rosestolato**
+Projeto privado para transformar prints em conhecimento estruturado: OCR robusto, ranking de usuários, repos GitHub, clusters, grafo semântico e dossiê por termo.
 
-Aplicação web para extração de texto de imagens (OCR) com gerenciamento de fotos e nuvem de palavras.
+## Objetivo Final
 
-## 📋 Requisitos
+- Automatizar ingestão de prints com renomeação e indexação contínua
+- Extrair texto com alta qualidade, reduzindo ruído de interface
+- Gerar contexto: palavras, @users, repos, clusters, grafo e dossiês por termo
+- Permitir uso futuro como app móvel ou produto para terceiros
+- Ter pipeline confiável com testes, lint e validações antes de mudanças
 
-- Python 3.8+
-- Flask
-- Tesseract OCR (instalado no sistema)
-- Pillow (PIL)
-- pytesseract
+## Status Atual (Resumo)
 
-## 🚀 Instalação
+- OCR com Tesseract e limpeza de texto
+- Extração de palavras, @users e repos GitHub
+- Banco SQLite com fotos, palavras, usuários, repos e embeddings
+- Similaridade por TF‑IDF + SVD
+- Clusters e grafo semântico no frontend
+- Dossiê de termo com coocorrências, timeline e âncoras
+- Painel LLM opcional com múltiplos provedores
+- Sincronização automática da pasta fotos/ a cada 20s
+- Interface responsiva com tema claro/escuro
 
-### 1. Instale o Tesseract OCR
+## Automações Ativas
 
-**Ubuntu/Debian:**
-```bash
-sudo apt update
-sudo apt install tesseract-ocr tesseract-ocr-por
+- Sincronização contínua da pasta fotos/ com renomeação e registro automático
+- Detecção de duplicatas por hash MD5
+- Registro inicial de fotos existentes no startup
+- Reconstrução de embeddings via endpoint dedicado
+
+## Como Funciona (Fluxo Completo)
+
+1. **Adicionar fotos** na pasta fotos/ ou via upload.
+2. **Sincronizar**: o backend renomeia e registra novas imagens.
+3. **Extrair OCR** na foto selecionada.
+4. **Limpar e salvar** o texto no banco.
+5. **Atualizar painéis**: palavras, usuários, repos, clusters e grafo.
+6. **Consultar dossiê** para ver coocorrências e linha do tempo.
+7. **Gerar insights LLM** (opcional) a partir do dossiê.
+
+## Arquitetura
+
+- Backend: Flask + SQLite
+- OCR: Tesseract + pré‑processamento
+- NLP: TF‑IDF + SVD para similaridade
+- Frontend: HTML/CSS/JS + D3 para grafo
+- LLM: integração opcional com múltiplos provedores
+
+## Estrutura do Projeto
+
+```
+leitorcontextofoto/
+├── app.py              # API Flask e rotas
+├── config.py           # Configurações globais
+├── database.py         # Banco SQLite e queries
+├── embeddings.py       # Vetores e similaridade
+├── file_manager.py     # Renomeação e sync de fotos
+├── ocr_engine.py       # Motor de OCR
+├── templates/
+│   └── index.html      # UI principal
+├── static/
+│   ├── style.css       # Estilos
+│   └── app.js          # Lógica do frontend
+├── fotos/              # Imagens (não versionado)
+├── ocr_bruto/          # OCR bruto (não versionado)
+├── logs/               # Logs (não versionado)
+├── tests/              # Testes
+└── gigu_brain.db       # DB (não versionado)
 ```
 
-**macOS:**
+## Principais Endpoints
+
+- GET /api/fotos
+- POST /api/ocr/<numero>
+- POST /api/ocr/<numero>/salvar
+- POST /api/ocr/<numero>/salvar-motor
+- POST /api/embeddings/rebuild
+- GET /api/similares/<numero>
+- GET /api/clusters
+- GET /api/grafo
+- GET /api/insights/dossie?termo=...
+- POST /api/llm/analisar
+
+## Testes e Qualidade
+
+Testes existentes:
+
+- tests/test_ocr_limpeza.py
+- tests/test_regressao_embeddings.py
+- tests/ocr_amostra.py
+- tests/renomear_fotos.py
+
+Comandos padrão:
+
 ```bash
-brew install tesseract
+python -m flake8 app.py database.py ocr_engine.py file_manager.py config.py --max-line-length=120
+python -m py_compile app.py database.py ocr_engine.py file_manager.py
+pytest -q
 ```
 
-**Windows:**
-- Baixe o instalador em: https://github.com/UB-Mannheim/tesseract/wiki
-- Adicione ao PATH do sistema
+## Erros e Problemas Reais Encontrados
 
-### 2. Configure o ambiente Python
+- PSReadLine no PowerShell gerando erro visual durante execução de comandos
+- flake8 ausente inicialmente, exigiu instalação via pip
+- OCR captura ruído de UI em prints de aplicativos
+- Tipografias pequenas e fundos escuros reduzem precisão
+- Repos GitHub podem aparecer truncados
+
+## Pendências e Próximos Passos
+
+- OCR por áreas de texto para reduzir UI residual
+- PaddleOCR como fallback e comparação real no endpoint /api/ocr/<numero>/comparar
+- Heurística para completar repos truncados
+- Modo batch para OCR em lote com relatório
+- Ranking temporal por semana/mês no frontend
+- Testes de regressão para grafo e clusters com dados reais
+- Pipeline automatizado antes de cada mudança no projeto
+- Planejamento de migração para PostgreSQL quando escalar
+
+## Instalação (Resumo)
+
+1. Instalar Tesseract no sistema.
+2. Criar venv e instalar dependências:
 
 ```bash
-# Crie o ambiente virtual
-python3 -m venv venv
-
-# Ative o ambiente virtual
-source venv/bin/activate  # Linux/macOS
-venv\Scripts\activate     # Windows
-
-# Instale as dependências
+python -m venv venv
+venv\Scripts\activate
 pip install flask pillow pytesseract
 ```
 
-### 3. Execute a aplicação
+3. Rodar:
 
 ```bash
 python app.py
 ```
 
-A aplicação estará disponível em: **http://localhost:5000**
+## Observações Importantes
 
----
-
-## 📖 Como Usar
-
-### Interface Principal
-
-A interface possui 3 áreas principais:
-
-1. **Área de Extração (Superior)** - 2 colunas
-2. **Barra Lateral (Esquerda)** - Importar/Categorias/Palavras
-3. **Galeria/Brain Map (Inferior)** - Fotos e nuvem de palavras
-
----
-
-### Passo a Passo: Extrair Texto de uma Foto
-
-#### Método 1: Arrastar da Galeria
-
-1. **Arraste** uma foto da galeria (embaixo) para a caixa de extração (esquerda superior)
-2. A foto aparecerá na caixa de extração
-3. Clique no botão **"⚡ Extrair Texto"**
-4. Aguarde o processamento (OCR)
-5. O texto extraído aparecerá na caixa da direita
-6. Use **"🧹 Limpar"** para remover ruídos
-7. Use **"💾 Salvar"** para salvar no banco
-
-#### Método 2: Upload de Nova Foto
-
-1. Clique na caixa de extração (esquerda) para selecionar uma foto do computador
-2. Ou arraste um arquivo de imagem do seu computador para a caixa
-3. Clique em **"⚡ Extrair Texto"**
-4. Siga os passos 5-7 acima
-
-#### Método 3: Importar Fotos
-
-1. Na barra lateral, clique em **"+ Adicionar Fotos"**
-2. Selecione uma ou mais imagens
-3. As fotos aparecerão na galeria
-
----
-
-### Funções dos Botões
-
-| Botão | Função |
-|-------|--------|
-| ⚡ Extrair Texto | Executa OCR na foto selecionada |
-| 🗑️ Trocar Foto | Limpa a foto atual para selecionar outra |
-| 🧹 Limpar | Remove ruídos e texto indesejado do resultado |
-| 💾 Salvar | Salva o texto no banco de dados |
-
----
-
-### Filtrar Fotos
-
-Na galeria, use os filtros:
-- **Todas** - Mostra todas as fotos
-- **Pendentes** - Fotos que ainda não tiveram OCR
-- **Processadas** - Fotos com OCR concluído
-
----
-
-### Nuvem de Palavras (Brain Map)
-
-Clique na aba **"🧠 Brain Map"** para ver:
-- Nuvem de palavras mais frequentes
-- Lista de palavras com contagem
-
----
-
-## 🛠️ Estrutura do Projeto
-
-```
-leitorcontextofoto/
-├── app.py              # Servidor Flask principal
-├── config.py           # Configurações do projeto
-├── database.py         # Banco de dados SQLite
-├── file_manager.py     # Gerenciamento de arquivos
-├── ocr_engine.py       # Motor de OCR
-├── templates/
-│   └── index.html      # Interface HTML
-├── static/
-│   ├── style.css       # Estilos CSS
-│   └── app.js          # JavaScript do frontend
-├── fotos/              # Pasta de fotos (não versionada)
-├── ocr_bruto/          # OCRs brutos (não versionado)
-└── gigu_brain.db       # Banco de dados (não versionado)
-```
-
----
-
-## 📝 Recursos
-
-- ✅ Extração de texto por OCR
-- ✅ Detecção de duplicatas por hash MD5
-- ✅ Limpeza automática de texto
-- ✅ Banco de palavras extraídas
-- ✅ Nuvem de palavras (Brain Map)
-- ✅ Categorização de fotos
-- ✅ Tema claro/escuro
-- ✅ Arrastar e soltar
-- ✅ Upload de novas fotos
-- ✅ Interface responsiva
-
----
-
-## ⚠️ Observações
-
-- Fotos de tela de celular (formato 9:16) são recomendadas
-- O banco de dados e fotos não são versionados (gitignore)
-- Requer conexão com internet para carregar fontes Google
-
----
-
-## 📄 Licença
-
-Desenvolvido por **Fábio Rosestolato**
+- Fotos, DB, OCR bruto e logs são locais e não versionados.
+- O foco atual é produção interna com automação total.
