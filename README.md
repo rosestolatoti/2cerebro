@@ -1,141 +1,80 @@
-# 2 CÉREBRO — OCR, Contexto e Tendências de Prints
+# 2 CÉREBRO — Conhecimento Estruturado e Automação
 
-Projeto privado para transformar prints em conhecimento estruturado: OCR robusto, ranking de usuários, repos GitHub, clusters, grafo semântico e dossiê por termo.
+O **2 Cérebro** é um sistema de "segundo cérebro digital" que transforma capturas de tela (Twitter, Instagram, GitHub, sites) em conhecimento estruturado, conectado e acionável.
 
-## Objetivo Final
+---
 
-- Automatizar ingestão de prints com renomeação e indexação contínua
-- Extrair texto com alta qualidade, reduzindo ruído de interface
-- Gerar contexto: palavras, @users, repos, clusters, grafo e dossiês por termo
-- Permitir uso futuro como app móvel ou produto para terceiros
-- Ter pipeline confiável com testes, lint e validações antes de mudanças
+## 🎯 Objetivo Final
+Criar uma plataforma profissional que **ingere imagens automaticamente**, extrai texto via OCR (reduzindo ruído de UI), gera embeddings semânticos para buscas complexas, detecta padrões/gargalos de informações, sugere postagens para redes sociais e gera insights usando Modelos de Linguagem (LLMs).
+O projeto foi pensado para rodar em hardware pessoal comum (CPU) com máxima otimização, e já possui arquitetura preparada para escalar para nuvem e múltiplos usuários.
 
-## Status Atual (Resumo)
+---
 
-- OCR com Tesseract e limpeza de texto
-- Extração de palavras, @users e repos GitHub
-- Banco SQLite com fotos, palavras, usuários, repos e embeddings
-- Similaridade por TF‑IDF + SVD
-- Clusters e grafo semântico no frontend
-- Dossiê de termo com coocorrências, timeline e âncoras
-- Painel LLM opcional com múltiplos provedores
-- Sincronização automática da pasta fotos/ a cada 20s
-- Interface responsiva com tema claro/escuro
+## 🚀 Progresso Atual
 
-## Automações Ativas
+O projeto passou recentemente por um intenso *Refactoring* estrutural para substituir a versão protótipo antiga (baseada em scripts monolíticos com Flask) por uma base profissional assíncrona.
 
-- Sincronização contínua da pasta fotos/ com renomeação e registro automático
-- Detecção de duplicatas por hash MD5
-- Registro inicial de fotos existentes no startup
-- Reconstrução de embeddings via endpoint dedicado
+### Fase 0 — Fundação (CONCLUÍDA)
+O foco foi limpar a dívida técnica e garantir que a infraestrutura local estivesse 100% pronta.
+* **Ambiente e Dependências**: Criação de ambiente virtual Linux (`.venv_linux/`), adição do `requirements.txt` com todas as dependências isoladas (FastAPI, ChromaDB, Sentence-Transformers, Pytest).
+* **Limpeza de Código**: Remoção de bibliotecas não utilizadas e fantasmas (como `langwatch`), correção de Expressões Regulares quebradas (regex de extração de data dos arquivos).
+* **Configurações e Segurança**: Arquivo `.gitignore` robusto criado, e criação do `.env.example` protegendo integrações com Ollama, Groq e Gemini.
+* **Testes Base**: Criação do script de validação de modelos que confirmou o funcionamento do `all-MiniLM-L6-v2`, `ChromaDB` e a API do `Ollama`.
 
-## Como Funciona (Fluxo Completo)
+### Fase 1 — Backend FastAPI (CONCLUÍDA)
+A arquitetura foi inteiramente reescrita para focar em performance, escalabilidade e design de software moderno.
+* **Estrutura de Pastas Profissional**: Divisão do código em `backend/api`, `backend/db`, `backend/services`, `backend/stores` e `backend/utils`.
+* **Banco de Dados Assíncrono**: Transição do SQLite síncrono para o `aiosqlite` (assíncrono) utilizando Connection Pools, Modo WAL e migrations automáticas no `database.py`. Separação do CRUD bruto (`repositories.py`) da lógica de negócios.
+* **Pydantic**: Adoção estrita de validação de dados com *Pydantic* tanto para Settings (`config.py`) quanto para In/Out da API (`models.py`).
+* **FastAPI**: Migração de todas as rotas de Flask para FastAPI. O App agora documenta tudo automaticamente no Swagger (`/docs`) e usa processamento assíncrono para liberar o event loop.
+* **Serviços em Background**: O Watchdog de sincronização de pastas (antigo sleep em loop) agora roda nativamente gerido pelo ciclo de vida do FastAPI sem travar requisições.
+* **Vetor e Semantic DB**: Criação de um Singleton Wrapper robusto para o `ChromaDB` (em `stores/chroma_store.py`).
+* **Testes de Integração**: Testes assíncronos via `pytest`, `pytest-asyncio` e cliente `httpx` validando a API contra bancos de dados em memória ou temporários. Tudo fluindo com lint (`Ruff`) e tipagem (`Mypy`) zerados.
+* **Migração de Dados**: Escrito e executado com sucesso script (`migrate_from_flask.py`) migrando imagens e banco antigo para o novo esquema relacional + vetorial de uma vez só.
 
-1. **Adicionar fotos** na pasta fotos/ ou via upload.
-2. **Sincronizar**: o backend renomeia e registra novas imagens.
-3. **Extrair OCR** na foto selecionada.
-4. **Limpar e salvar** o texto no banco.
-5. **Atualizar painéis**: palavras, usuários, repos, clusters e grafo.
-6. **Consultar dossiê** para ver coocorrências e linha do tempo.
-7. **Gerar insights LLM** (opcional) a partir do dossiê.
+---
 
-## Arquitetura
+## 🏗️ Arquitetura e Tecnologias
 
-- Backend: Flask + SQLite
-- OCR: Tesseract + pré‑processamento
-- NLP: TF‑IDF + SVD para similaridade
-- Frontend: HTML/CSS/JS + D3 para grafo
-- LLM: integração opcional com múltiplos provedores
+* **Backend API**: Python 3.12, FastAPI, Uvicorn, Pydantic, HTTPX.
+* **Banco Relacional**: SQLite (via aiosqlite, WAL Mode).
+* **Banco Vetorial**: ChromaDB (Cosine Similarity).
+* **Machine Learning / OCR**: PyTesseract, SentenceTransformers (`all-MiniLM-L6-v2`), NumPy, Pillow.
+* **Qualidade**: Ruff, Mypy, Pytest.
+* **LLM Integrations**: Ollama (Local), Groq, Gemini.
 
-## Estrutura do Projeto
+---
 
-```
-leitorcontextofoto/
-├── app.py              # API Flask e rotas
-├── config.py           # Configurações globais
-├── database.py         # Banco SQLite e queries
-├── embeddings.py       # Vetores e similaridade
-├── file_manager.py     # Renomeação e sync de fotos
-├── ocr_engine.py       # Motor de OCR
-├── templates/
-│   └── index.html      # UI principal
-├── static/
-│   ├── style.css       # Estilos
-│   └── app.js          # Lógica do frontend
-├── fotos/              # Imagens (não versionado)
-├── ocr_bruto/          # OCR bruto (não versionado)
-├── logs/               # Logs (não versionado)
-├── tests/              # Testes
-└── gigu_brain.db       # DB (não versionado)
-```
+## 💻 Como Rodar (Ambiente Linux)
 
-## Principais Endpoints
+1. Instale o Tesseract no sistema:
+   ```bash
+   sudo apt install tesseract-ocr tesseract-ocr-por
+   ```
+2. Inicie o ambiente virtual limpo e instale:
+   ```bash
+   python3 -m venv .venv_linux
+   source .venv_linux/bin/activate
+   pip install -r requirements.txt
+   ```
+3. Copie o arquivo de variáveis de ambiente e preencha:
+   ```bash
+   cp .env.example .env
+   ```
+4. Suba o servidor:
+   ```bash
+   PYTHONPATH=. python backend/main.py
+   # A API estará disponível em http://0.0.0.0:8000
+   # A documentação automática (Swagger) em http://0.0.0.0:8000/docs
+   ```
 
-- GET /api/fotos
-- POST /api/ocr/<numero>
-- POST /api/ocr/<numero>/salvar
-- POST /api/ocr/<numero>/salvar-motor
-- POST /api/embeddings/rebuild
-- GET /api/similares/<numero>
-- GET /api/clusters
-- GET /api/grafo
-- GET /api/insights/dossie?termo=...
-- POST /api/llm/analisar
+---
 
-## Testes e Qualidade
+## 🔮 Próximos Passos (Fases Mapeadas)
 
-Testes existentes:
-
-- tests/test_ocr_limpeza.py
-- tests/test_regressao_embeddings.py
-- tests/ocr_amostra.py
-- tests/renomear_fotos.py
-
-Comandos padrão:
-
-```bash
-python -m flake8 app.py database.py ocr_engine.py file_manager.py config.py --max-line-length=120
-python -m py_compile app.py database.py ocr_engine.py file_manager.py
-pytest -q
-```
-
-## Erros e Problemas Reais Encontrados
-
-- PSReadLine no PowerShell gerando erro visual durante execução de comandos
-- flake8 ausente inicialmente, exigiu instalação via pip
-- OCR captura ruído de UI em prints de aplicativos
-- Tipografias pequenas e fundos escuros reduzem precisão
-- Repos GitHub podem aparecer truncados
-
-## Pendências e Próximos Passos
-
-- OCR por áreas de texto para reduzir UI residual
-- PaddleOCR como fallback e comparação real no endpoint /api/ocr/<numero>/comparar
-- Heurística para completar repos truncados
-- Modo batch para OCR em lote com relatório
-- Ranking temporal por semana/mês no frontend
-- Testes de regressão para grafo e clusters com dados reais
-- Pipeline automatizado antes de cada mudança no projeto
-- Planejamento de migração para PostgreSQL quando escalar
-
-## Instalação (Resumo)
-
-1. Instalar Tesseract no sistema.
-2. Criar venv e instalar dependências:
-
-```bash
-python -m venv venv
-venv\Scripts\activate
-pip install flask pillow pytesseract
-```
-
-3. Rodar:
-
-```bash
-python app.py
-```
-
-## Observações Importantes
-
-- Fotos, DB, OCR bruto e logs são locais e não versionados.
-- O foco atual é produção interna com automação total.
+* **FASE 2 (Cérebro 1 — Enriquecimento)**: 
+  * Classificação automática pós-OCR via LLMs (Ollama/Groq) determinando fonte, tema, sentimento e gerando resumo do print.
+* **FASE 3 (Cérebro 2 — Geração de Valor)**:
+  * Agente que avalia o banco para gerar "Briefing Semanal", descobrir tendências, sugerir tópicos de posts e apontar lacunas no conhecimento rastreado.
+* **FASE 4 (Frontend React)**:
+  * Reescrita completa da interface de usuário que abandonará HTML puro/monolítico para dar lugar a um app modular em React (Vite, Tailwind, Zustand) exibindo o Grafo de forma interativa.

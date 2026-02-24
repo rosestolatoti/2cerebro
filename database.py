@@ -13,6 +13,8 @@ DB_PATH = Path(__file__).parent / "gigu_brain.db"
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
@@ -87,6 +89,15 @@ def init_db():
             dimensao    INTEGER,
             atualizado_em TEXT
         );
+
+        CREATE INDEX IF NOT EXISTS idx_fotos_numero ON fotos(numero);
+        CREATE INDEX IF NOT EXISTS idx_fotos_hash ON fotos(hash_md5);
+        CREATE INDEX IF NOT EXISTS idx_fotos_semana ON fotos(semana);
+        CREATE INDEX IF NOT EXISTS idx_fotos_mes ON fotos(mes);
+        CREATE INDEX IF NOT EXISTS idx_palavras_palavra ON palavras(palavra);
+        CREATE INDEX IF NOT EXISTS idx_usuarios_username ON usuarios(username);
+        CREATE INDEX IF NOT EXISTS idx_repos_repo ON repos(repo);
+        CREATE INDEX IF NOT EXISTS idx_embeddings_modelo_numero ON embeddings(modelo, numero);
     """)
 
     colunas_fotos = [

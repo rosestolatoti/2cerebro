@@ -1,11 +1,46 @@
 venv/
 __pycache__/
 *.pyc
-gigu_brain.db
+*.pyo
+*.pyd
+
+# Banco de dados
+*.db
+*.sqlite
+*.sqlite3
+
+# Dados do projeto (gitignore - grandes demais)
 fotos/
 ocr_bruto/
 obsidian_notas/
+chroma_data/
+models/
+
+# Logs
 logs/
+*.log
+server.log
+flask.log
+
+# Ambiente virtual
+.venv/
+.venv_linux/
+
+# Variaveis de ambiente
 .env
+
+# Pastas de trabalho
 PROMPT/
 RELATORIOS/
+APAGAVEL/
+
+# Arquivos de diagnostico gerados
+diagnostico_chroma_out.json
+
+# Cache e temporarios
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/

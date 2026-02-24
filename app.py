@@ -5,7 +5,7 @@ API e servidor principal
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from pathlib import Path
-from config import SYNC_INTERVAL
+from config import SYNC_INTERVAL, MAX_UPLOAD_FILES, EMBEDDING_MODEL
 from database import (
     adicionar_blacklist,
     atualizar_ocr,
@@ -29,7 +29,22 @@ from database import (
 )
 from file_manager import registrar_fotos_existentes, salvar_upload, sincronizar_pasta_fotos
 from ocr_engine import extrair_repos_github, extrair_usernames, processar_imagem
-from embeddings import construir_clusters, construir_grafo, gerar_embeddings, similaridades, termos_por_cluster
+from embeddings import (
+    construir_clusters,
+    construir_grafo,
+    gerar_embedding_query,
+    gerar_embeddings,
+    similaridades,
+    similaridades_query,
+    termos_por_cluster,
+)
+from chroma_store import (
+    chroma_disponivel,
+    chroma_get_embedding,
+    chroma_query_similar,
+    chroma_total,
+    chroma_upsert,
+)
 from datetime import datetime
 from threading import Thread
 import time
@@ -95,8 +110,8 @@ def api_upload():
     files = request.files.getlist("fotos")
     if not files:
         return jsonify({"erro": "Nenhum arquivo enviado"}), 400
-    if len(files) > 5:
-        return jsonify({"erro": "Máximo 5 fotos por vez"}), 400
+    if len(files) > MAX_UPLOAD_FILES:
+        return jsonify({"erro": f"Máximo {MAX_UPLOAD_FILES} fotos por vez"}), 400
 
     resultados = []
     for file in files:
@@ -292,6 +307,77 @@ def api_palavras_por_semana():
     resultado.sort(key=lambda x: x["contagem_semana"], reverse=True)
     conn.close()
     return jsonify(resultado[:50])
+
+
+def _carregar_insights_semana(semana: str) -> dict:
+    conn = get_conn()
+    fotos_semana = conn.execute(
+        "SELECT numero, ocr_limpo, ocr_texto FROM fotos WHERE semana=?",
+        (semana,)
+    ).fetchall()
+    numeros = [str(f["numero"]) for f in fotos_semana]
+    numeros_set = set(numeros)
+
+    palavras_rows = conn.execute(
+        "SELECT palavra, fotos_ids FROM palavras ORDER BY contagem DESC"
+    ).fetchall()
+    palavras = []
+    for p in palavras_rows:
+        fotos_ids = json.loads(p["fotos_ids"] or "[]")
+        intersecao = _intersecao_ids(fotos_ids, numeros_set)
+        if intersecao:
+            palavras.append({"palavra": p["palavra"], "contagem": len(intersecao)})
+    palavras.sort(key=lambda x: x["contagem"], reverse=True)
+
+    usuarios_rows = conn.execute(
+        "SELECT username, fotos_ids FROM usuarios ORDER BY contagem DESC"
+    ).fetchall()
+    usuarios = []
+    for u in usuarios_rows:
+        fotos_ids = json.loads(u["fotos_ids"] or "[]")
+        intersecao = _intersecao_ids(fotos_ids, numeros_set)
+        if intersecao:
+            usuarios.append({"username": u["username"], "contagem": len(intersecao)})
+    usuarios.sort(key=lambda x: x["contagem"], reverse=True)
+
+    repos_rows = conn.execute(
+        "SELECT repo, fotos_ids FROM repos ORDER BY contagem DESC"
+    ).fetchall()
+    repos = []
+    for r in repos_rows:
+        fotos_ids = json.loads(r["fotos_ids"] or "[]")
+        intersecao = _intersecao_ids(fotos_ids, numeros_set)
+        if intersecao:
+            repos.append({"repo": r["repo"], "contagem": len(intersecao)})
+    repos.sort(key=lambda x: x["contagem"], reverse=True)
+
+    conn.close()
+    return {
+        "semana": semana,
+        "total_fotos": len(numeros),
+        "palavras": palavras[:15],
+        "usuarios": usuarios[:10],
+        "repos": repos[:10]
+    }
+
+
+@app.route("/api/insights/semana", methods=["GET"])
+def api_insights_semana():
+    semana = request.args.get("semana")
+    if not semana:
+        conn = get_conn()
+        row = conn.execute("""
+            SELECT semana FROM fotos
+            WHERE semana IS NOT NULL AND semana != ''
+            ORDER BY semana DESC
+            LIMIT 1
+        """).fetchone()
+        conn.close()
+        semana = row["semana"] if row else None
+
+    if not semana:
+        return jsonify({"erro": "Sem dados suficientes"}), 400
+    return jsonify(_carregar_insights_semana(semana))
 
 
 # --- USUARIOS (@mentions) ---
@@ -643,22 +729,59 @@ def _fotos_com_texto(semana: str | None = None):
 
 
 def _rebuild_embeddings(fotos: list[dict]):
-    resultado = gerar_embeddings(fotos)
+    resultado = gerar_embeddings(fotos, modelo=EMBEDDING_MODEL)
     if not resultado.get("sucesso"):
         return resultado
-    modelo = "tfidf_svd_v1"
+    modelo = resultado.get("modelo") or "tfidf_svd_v1"
     dimensao = resultado.get("dimensao", 0)
     for numero, vetor in resultado["vetores"].items():
         salvar_embedding(numero, modelo, vetor, dimensao)
+    if modelo == "semantic_v1" and chroma_disponivel():
+        chroma_upsert(modelo, fotos, resultado["vetores"])
     return resultado
+
+
+def _rebuild_embeddings_incremental(fotos: list[dict]):
+    modelo = "semantic_v1"
+    existentes = listar_embeddings(modelo)
+    existentes_numeros = {r["numero"] for r in existentes}
+    faltantes = [f for f in fotos if f["numero"] not in existentes_numeros]
+    if not faltantes:
+        dimensao = existentes[0]["dimensao"] if existentes else 0
+        return {"sucesso": True, "vetores": {}, "dimensao": dimensao, "modelo": modelo}
+    resultado = gerar_embeddings(faltantes, modelo="semantic")
+    if not resultado.get("sucesso"):
+        return resultado
+    dimensao = resultado.get("dimensao", 0)
+    for numero, vetor in resultado["vetores"].items():
+        salvar_embedding(numero, modelo, vetor, dimensao)
+    if chroma_disponivel():
+        chroma_upsert(modelo, faltantes, resultado["vetores"])
+    return resultado
+
+
+def _sync_chroma_from_sqlite():
+    modelo = "semantic_v1"
+    registros = listar_embeddings(modelo)
+    if not registros:
+        return {"sucesso": False, "total": 0}
+    fotos = _fotos_com_texto()
+    vetores = {r["numero"]: json.loads(r["vetor"]) for r in registros}
+    total = chroma_upsert(modelo, fotos, vetores)
+    return {"sucesso": True, "total": total}
 
 
 @app.route("/api/embeddings/rebuild", methods=["POST"])
 def api_embeddings_rebuild():
+    data = request.get_json(silent=True) or {}
+    mode = data.get("mode", "full").lower()
     fotos = _fotos_com_texto()
     if len(fotos) < 2:
         return jsonify({"sucesso": False, "erro": "Dados insuficientes"}), 400
-    resultado = _rebuild_embeddings(fotos)
+    if mode == "incremental" and EMBEDDING_MODEL.lower() in {"semantic", "auto"}:
+        resultado = _rebuild_embeddings_incremental(fotos)
+    else:
+        resultado = _rebuild_embeddings(fotos)
     if not resultado.get("sucesso"):
         return jsonify(resultado), 500
     return jsonify({"sucesso": True, "total": len(fotos), "dimensao": resultado.get("dimensao", 0)})
@@ -667,19 +790,90 @@ def api_embeddings_rebuild():
 @app.route("/api/fotos/<numero>/similares", methods=["GET"])
 def api_fotos_similares(numero):
     limit = request.args.get("limit", 6, type=int)
-    modelo = "tfidf_svd_v1"
-    registros = listar_embeddings(modelo)
-    if not registros:
-        fotos = _fotos_com_texto()
-        if len(fotos) < 2:
-            return jsonify([])
-        resultado = _rebuild_embeddings(fotos)
-        if not resultado.get("sucesso"):
-            return jsonify([])
+    modelo = "semantic_v1" if EMBEDDING_MODEL.lower() in {"semantic", "auto"} else "tfidf_svd_v1"
+    if modelo == "semantic_v1" and chroma_disponivel():
+        if chroma_total(modelo) == 0:
+            resultado_sync = _sync_chroma_from_sqlite()
+            if not resultado_sync.get("sucesso") or resultado_sync.get("total", 0) == 0:
+                fotos = _fotos_com_texto()
+                if len(fotos) < 2:
+                    return jsonify([])
+                resultado = _rebuild_embeddings_incremental(fotos)
+                if not resultado.get("sucesso"):
+                    return jsonify([])
+        query_vec = chroma_get_embedding(modelo, numero)
+        if query_vec:
+            sims = chroma_query_similar(modelo, query_vec, limit + 1)
+            sims = [(n, s) for n, s in sims if n != str(numero)][:limit]
+        else:
+            sims = []
+    else:
         registros = listar_embeddings(modelo)
+        if not registros:
+            fotos = _fotos_com_texto()
+            if len(fotos) < 2:
+                return jsonify([])
+            resultado = _rebuild_embeddings(fotos)
+            if not resultado.get("sucesso"):
+                return jsonify([])
+            registros = listar_embeddings(modelo)
 
-    vetores = {r["numero"]: json.loads(r["vetor"]) for r in registros}
-    sims = similaridades(vetores, numero)[:limit]
+        vetores = {r["numero"]: json.loads(r["vetor"]) for r in registros}
+        sims = similaridades(vetores, numero)[:limit]
+    if not sims:
+        return jsonify([])
+
+    numeros = [n for n, _ in sims]
+    conn = get_conn()
+    rows = conn.execute(
+        f"SELECT numero, filename FROM fotos WHERE numero IN ({','.join(['?']*len(numeros))})",
+        tuple(numeros)
+    ).fetchall()
+    conn.close()
+    mapa = {r["numero"]: r["filename"] for r in rows}
+    resultado = [{"numero": n, "score": s, "filename": mapa.get(n)} for n, s in sims]
+    return jsonify(resultado)
+
+
+@app.route("/api/buscar/semantico", methods=["GET"])
+def api_buscar_semantico():
+    termo = request.args.get("q", "").strip()
+    limit = request.args.get("limit", 8, type=int)
+    if len(termo) < 2:
+        return jsonify([])
+
+    modelo = "semantic_v1" if EMBEDDING_MODEL.lower() in {"semantic", "auto"} else "tfidf_svd_v1"
+    if modelo != "semantic_v1":
+        return api_buscar()
+
+    if modelo == "semantic_v1" and chroma_disponivel():
+        if chroma_total(modelo) == 0:
+            resultado_sync = _sync_chroma_from_sqlite()
+            if not resultado_sync.get("sucesso") or resultado_sync.get("total", 0) == 0:
+                fotos = _fotos_com_texto()
+                if len(fotos) < 2:
+                    return jsonify([])
+                resultado = _rebuild_embeddings_incremental(fotos)
+                if not resultado.get("sucesso"):
+                    return jsonify([])
+        query_vec = gerar_embedding_query(termo, modelo)
+        if query_vec is None:
+            return jsonify([])
+        sims = chroma_query_similar(modelo, query_vec.tolist(), limit)
+    else:
+        registros = listar_embeddings(modelo)
+        if not registros:
+            fotos = _fotos_com_texto()
+            if len(fotos) < 2:
+                return jsonify([])
+            resultado = _rebuild_embeddings(fotos)
+            if not resultado.get("sucesso"):
+                return jsonify([])
+            registros = listar_embeddings(modelo)
+
+        vetores = {r["numero"]: json.loads(r["vetor"]) for r in registros}
+        query_vec = gerar_embedding_query(termo, modelo)
+        sims = similaridades_query(vetores, query_vec)[:limit]
     if not sims:
         return jsonify([])
 
@@ -713,7 +907,7 @@ def api_clusters_semana():
     if len(fotos) < 2:
         return jsonify({"semana": semana, "clusters": []})
 
-    resultado = gerar_embeddings(fotos)
+    resultado = gerar_embeddings(fotos, modelo=EMBEDDING_MODEL)
     if not resultado.get("sucesso"):
         return jsonify({"semana": semana, "clusters": []})
 
@@ -737,7 +931,7 @@ def api_grafo():
     fotos = _fotos_com_texto()
     if len(fotos) < 2:
         return jsonify({"nodes": [], "links": []})
-    resultado = gerar_embeddings(fotos)
+    resultado = gerar_embeddings(fotos, modelo=EMBEDDING_MODEL)
     if not resultado.get("sucesso"):
         return jsonify({"nodes": [], "links": []})
     vetores = resultado["vetores"]

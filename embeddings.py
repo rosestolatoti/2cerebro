@@ -1,11 +1,32 @@
 import math
 import re
-from config import STOPWORDS, EMBEDDING_DIM, EMBEDDING_THRESHOLD, EMBEDDING_MAX_LINKS
+from config import STOPWORDS, EMBEDDING_DIM, EMBEDDING_THRESHOLD, EMBEDDING_MAX_LINKS, SEMANTIC_MODEL_NAME, MODELS_DIR
 
 try:
     import numpy as np
 except Exception:
     np = None
+
+try:
+    from sentence_transformers import SentenceTransformer
+except Exception:
+    SentenceTransformer = None
+
+_semantic_model = None
+
+
+def _get_semantic_model():
+    global _semantic_model
+    if _semantic_model is not None:
+        return _semantic_model
+    if SentenceTransformer is None:
+        return None
+    local_dir = MODELS_DIR / "all-MiniLM-L6-v2"
+    if local_dir.exists():
+        _semantic_model = SentenceTransformer(str(local_dir))
+    else:
+        _semantic_model = SentenceTransformer(SEMANTIC_MODEL_NAME, cache_folder=str(MODELS_DIR))
+    return _semantic_model
 
 
 def _tokenizar(texto: str) -> list[str]:
@@ -44,11 +65,30 @@ def _tfidf_matrix(textos: list[str]):
     return vocab, idf, docs_tokens, matriz
 
 
-def gerar_embeddings(fotos: list[dict]):
+def gerar_embeddings(fotos: list[dict], modelo: str = "auto"):
     if np is None:
         return {"sucesso": False, "erro": "numpy não instalado"}
 
     textos = [f.get("ocr_limpo", "") or "" for f in fotos]
+    tokens = [_tokenizar(t) for t in textos]
+    modelo = (modelo or "auto").lower()
+
+    if modelo in {"semantic", "auto"}:
+        model = _get_semantic_model()
+        if model is not None:
+            emb = model.encode(textos, normalize_embeddings=True)
+            emb = np.array(emb, dtype=float)
+            vetores = {fotos[i]["numero"]: emb[i].tolist() for i in range(len(fotos))}
+            return {
+                "sucesso": True,
+                "vetores": vetores,
+                "tokens": tokens,
+                "vocab": {},
+                "idf": [],
+                "dimensao": emb.shape[1],
+                "modelo": "semantic_v1"
+            }
+
     vocab, idf, docs_tokens, matriz = _tfidf_matrix(textos)
     if not matriz:
         return {"sucesso": False, "erro": "sem textos para vetorização"}
@@ -70,8 +110,22 @@ def gerar_embeddings(fotos: list[dict]):
         "tokens": docs_tokens,
         "vocab": vocab,
         "idf": idf,
-        "dimensao": k
+        "dimensao": k,
+        "modelo": "tfidf_svd_v1"
     }
+
+
+def gerar_embedding_query(texto: str, modelo: str):
+    if np is None:
+        return None
+    modelo = (modelo or "").lower()
+    if modelo.startswith("semantic"):
+        model = _get_semantic_model()
+        if model is None:
+            return None
+        emb = model.encode([texto], normalize_embeddings=True)
+        return np.array(emb[0], dtype=float)
+    return None
 
 
 def similaridades(vetores: dict, alvo: str):
@@ -87,6 +141,21 @@ def similaridades(vetores: dict, alvo: str):
     for i, n in enumerate(numeros):
         if n == alvo:
             continue
+        resultado.append((n, float(sims[i])))
+    resultado.sort(key=lambda x: x[1], reverse=True)
+    return resultado
+
+
+def similaridades_query(vetores: dict, query_vec):
+    if np is None or query_vec is None:
+        return []
+    numeros = list(vetores.keys())
+    if not numeros:
+        return []
+    matriz = np.array([vetores[n] for n in numeros], dtype=float)
+    sims = matriz @ np.array(query_vec, dtype=float)
+    resultado = []
+    for i, n in enumerate(numeros):
         resultado.append((n, float(sims[i])))
     resultado.sort(key=lambda x: x[1], reverse=True)
     return resultado

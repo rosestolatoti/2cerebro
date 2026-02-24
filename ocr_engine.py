@@ -8,7 +8,7 @@ import pytesseract
 from pytesseract import Output
 from PIL import Image, ImageEnhance
 from pathlib import Path
-from config import TESSERACT_LANG, TESSERACT_CONFIG, STOPWORDS, OCR_DIR
+from config import TESSERACT_LANG, TESSERACT_CONFIG, STOPWORDS, OCR_DIR, MAX_IMAGE_PIXELS, MAX_IMAGE_SIDE
 from datetime import datetime
 import os
 try:
@@ -68,6 +68,12 @@ if TESSERACT_CMD:
 def preprocessar(image_path: str) -> Image.Image:
     img = Image.open(image_path).convert("RGB")
     w, h = img.size
+    if w * h > MAX_IMAGE_PIXELS or max(w, h) > MAX_IMAGE_SIDE:
+        scale = min(MAX_IMAGE_SIDE / max(w, h), (MAX_IMAGE_PIXELS / (w * h)) ** 0.5)
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+        w, h = img.size
 
     topo = int(h * (0.10 if h > 1600 else 0.07))
     base = int(h * (0.06 if h > 1600 else 0.04))
@@ -245,6 +251,15 @@ caracteres: {len(texto)}
 
 def processar_imagem(image_path: str, numero: str, filename: str) -> dict:
     try:
+        if not Path(image_path).exists():
+            return {
+                "sucesso": False,
+                "erro": "Arquivo não encontrado",
+                "texto_bruto": "",
+                "texto_limpo": "",
+                "palavras": [],
+                "caracteres": 0
+            }
         img = preprocessar(image_path)
         config = _config_por_imagem(img)
         texto_bruto = pytesseract.image_to_string(
